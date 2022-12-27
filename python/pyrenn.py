@@ -716,6 +716,7 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 	J,E,e = RTRL(net,data)
 	k = 0
 	ErrorHistory=np.zeros(k_max+1) #Vektor for Error hostory
+	ValErrorHistory=np.zeros(k_max+1) #Vektor for Error hostory
 	ErrorHistory[k]=E
 	if verbose:
 		print('Iteration: ',k,'		Error: ',E,'	scale factor: ',dampfac)
@@ -758,25 +759,25 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 					
 					if verbose:
 						print('E-Enew<=min_E_step Encountered!!')
-						if early>=5.0:
+						if early>=5.0: 
 							print('5 Times * E-Enew<=min_E_step Encountered!!')
 					break                    
 		
 		#Calculate Jacobian, Error and error vector for next iteration
 		J,E,e = RTRL(net,data)
+		k = k+1
+		ErrorHistory[k] = E/P.shape[1]
 		
 		# VAL
 		if early_stop:
 			val_pred = NNOut(val_P,net)
 
 			val_err = np.square(val_Y - val_pred).mean()
-
-			print(val_err)
-
+			ValErrorHistory[k] = val_err/val_P.shape[1]
+		
+			
 		# VAL
 
-		k = k+1
-		ErrorHistory[k] = E
 		if verbose:
 			print('Iteration: ',k,'		Error: ',E,'	scale factor: ',dampfac)
 	
@@ -792,6 +793,9 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 			break
 		
 	net['ErrorHistory'] = ErrorHistory[:k]
+	if early_stop:
+		net['ValErrorHistory'] = ValErrorHistory[:k]
+	
 	return net
 	
 	
