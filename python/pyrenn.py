@@ -674,7 +674,7 @@ def BPTT(net,data):
 
 	
 def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
-			verbose = False,min_E_step=1e-09):
+			verbose = False,min_E_step=1e-09,early_stop=False,val_P=None,val_Y=None,val_friction=0.1):
 	"""	Implementation of the Levenberg-Marquardt-Algorithm (LM) based on:
 		Levenberg, K.: A Method for the Solution of Certain Problems in Least Squares.
 		Quarterly of Applied Mathematics, 2:164-168, 1944.
@@ -695,6 +695,20 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 	Returns:
 		net: 	trained Neural Network 
 	"""
+	if Y.ndim==1:
+		Y = np.expand_dims(Y,axis=0)
+	if early_stop and (val_P==None):
+		sample_size = P.shape[1]
+		val_sample_size = np.floor(sample_size*val_friction).astype(int)
+		val_idx = np.random.choice(P.shape[1],val_sample_size,replace=False)
+		mask = np.ones(P.shape[1],dtype=bool)
+		mask[val_idx] = False
+		val_P = P[:,~mask]
+		val_Y = Y[:,~mask]
+
+		P = P[:,mask]
+		Y = Y[:,mask]
+	
 	#create data dict
 	data,net = prepare_data(P,Y,net)
 	
@@ -750,6 +764,17 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 		
 		#Calculate Jacobian, Error and error vector for next iteration
 		J,E,e = RTRL(net,data)
+		
+		# VAL
+		if early_stop:
+			val_pred = NNOut(val_P,net)
+
+			val_err = np.square(val_Y - val_pred).mean()
+
+			print(val_err)
+
+		# VAL
+
 		k = k+1
 		ErrorHistory[k] = E
 		if verbose:
@@ -765,7 +790,7 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 		elif early>=5.0:
 			print('Error decreased 5 times by minimum step. Force training exit.')
 			break
-        
+		
 	net['ErrorHistory'] = ErrorHistory[:k]
 	return net
 	
