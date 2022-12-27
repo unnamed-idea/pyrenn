@@ -1,6 +1,6 @@
 import numpy as np
-
-def CreateNN(nn,dIn=[0],dIntern=[],dOut=[]):
+import mlflow
+def CreateNN(nn,dIn=[0],dIntern=[],dOut=[],use_mlflow=False):
 	"""Create Neural Network
 	
 	Args:
@@ -40,6 +40,12 @@ def CreateNN(nn,dIn=[0],dIntern=[],dOut=[]):
 	net = w_Create(net) #initialize random weight vector and specify sets
 	net['w'] = net['w0'].copy() #weight vector used for calculation
 	net['N'] = len(net['w0']) #number of weights
+	if use_mlflow:
+		import mlflow
+		net['use_mlflow'] = True
+	else:
+		net['use_mlflow'] = False
+	
 	return net
 	
 def w_Create(net):
@@ -718,6 +724,13 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 	ErrorHistory=np.zeros(k_max+1) #Vektor for Error hostory
 	ValErrorHistory=np.zeros(k_max+1) #Vektor for Error hostory
 	ErrorHistory[k]=E
+	if early_stop:
+		val_pred = NNOut(val_P,net)
+
+		val_err = np.square(val_Y - val_pred).mean()
+		ValErrorHistory[k] = val_err/val_P.shape[1]
+		
+
 	if verbose:
 		print('Iteration: ',k,'		Error: ',E,'	scale factor: ',dampfac)
 	
@@ -767,15 +780,18 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 		J,E,e = RTRL(net,data)
 		k = k+1
 		ErrorHistory[k] = E/P.shape[1]
-		
 		# VAL
 		if early_stop:
 			val_pred = NNOut(val_P,net)
 
 			val_err = np.square(val_Y - val_pred).mean()
 			ValErrorHistory[k] = val_err/val_P.shape[1]
-		
-			
+		if net['use_mlflow']:
+
+			mlflow.log_metric('train_mse',E/P.shape[1])
+			if early_stop:
+				mlflow.log_metric('val_mse',val_err/val_P.shape[1])
+
 		# VAL
 
 		if verbose:
