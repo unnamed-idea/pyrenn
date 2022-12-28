@@ -1,6 +1,9 @@
 import numpy as np
-import mlflow
-def CreateNN(nn,dIn=[0],dIntern=[],dOut=[],use_mlflow=False):
+from copy import deepcopy
+import time 
+import os 
+
+def CreateNN(nn,dIn=[0],dIntern=[],dOut=[],use_mlflow=False,name=''):
 	"""Create Neural Network
 	
 	Args:
@@ -40,8 +43,10 @@ def CreateNN(nn,dIn=[0],dIntern=[],dOut=[],use_mlflow=False):
 	net = w_Create(net) #initialize random weight vector and specify sets
 	net['w'] = net['w0'].copy() #weight vector used for calculation
 	net['N'] = len(net['w0']) #number of weights
+	net['name'] = name
+	net['best_epoch']=0
+
 	if use_mlflow:
-		import mlflow
 		net['use_mlflow'] = True
 	else:
 		net['use_mlflow'] = False
@@ -680,7 +685,7 @@ def BPTT(net,data):
 
 	
 def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
-			verbose = False,min_E_step=1e-09,early_stop=False,val_P=None,val_Y=None,val_friction=0.1):
+			verbose = False,min_E_step=1e-09,early_stop=False,val_P=None,val_Y=None,val_friction=0.1,patiance=5):
 	"""	Implementation of the Levenberg-Marquardt-Algorithm (LM) based on:
 		Levenberg, K.: A Method for the Solution of Certain Problems in Least Squares.
 		Quarterly of Applied Mathematics, 2:164-168, 1944.
@@ -701,9 +706,12 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 	Returns:
 		net: 	trained Neural Network 
 	"""
+	if net['use_mlflow']:
+		import mlflow
+
 	if Y.ndim==1:
 		Y = np.expand_dims(Y,axis=0)
-	if early_stop and (val_P==None):
+	if early_stop and (val_P is None):
 		sample_size = P.shape[1]
 		val_sample_size = np.floor(sample_size*val_friction).astype(int)
 		val_idx = np.random.choice(P.shape[1],val_sample_size,replace=False)
@@ -720,15 +728,19 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 	
 	#Calculate Jacobian, Error and error vector for first iteration
 	J,E,e = RTRL(net,data)
+	
 	k = 0
+	val_patiance = 0
+	best_model = net
+
 	ErrorHistory=np.zeros(k_max+1) #Vektor for Error hostory
 	ValErrorHistory=np.zeros(k_max+1) #Vektor for Error hostory
-	ErrorHistory[k]=E
+	ErrorHistory[k]=E/P.shape[1]
 	if early_stop:
 		val_pred = NNOut(val_P,net)
 
-		val_err = np.square(val_Y - val_pred).mean()
-		ValErrorHistory[k] = val_err/val_P.shape[1]
+		old_val_err = np.square(val_Y - val_pred).mean()
+		ValErrorHistory[k] = old_val_err/val_P.shape[1]
 		
 
 	if verbose:
@@ -758,7 +770,9 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 			
 			net['w'] = w + w_delta #new weight vector
 			
-			Enew = calc_error(net,data) #calculate new Error E			
+			Enew = calc_error(net,data) #calculate new Error E	
+
+
 			if Enew<E and abs(E-Enew)>=min_E_step:
 			#Optimization Step successful!
 				dampfac= dampfac/dampconst#adapt scale factor
@@ -779,20 +793,37 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 		#Calculate Jacobian, Error and error vector for next iteration
 		J,E,e = RTRL(net,data)
 		k = k+1
-		ErrorHistory[k] = E/P.shape[1]
+
+		train_pred = NNOut(P,net)
+
+		train_err = (np.square(Y - train_pred).mean())/P.shape[1]
+		ErrorHistory[k] = train_err
 		# VAL
 		if early_stop:
 			val_pred = NNOut(val_P,net)
 
-			val_err = np.square(val_Y - val_pred).mean()
-			ValErrorHistory[k] = val_err/val_P.shape[1]
+			val_err = (np.square(val_Y - val_pred).mean())/val_P.shape[1]
+			ValErrorHistory[k] = val_err
 		if net['use_mlflow']:
 
-			mlflow.log_metric('train_mse',E/P.shape[1])
+			mlflow.log_metric('train_mse',E/P.shape[1],step=k)
 			if early_stop:
-				mlflow.log_metric('val_mse',val_err/val_P.shape[1])
+				mlflow.log_metric('val_mse',val_err,step=k)
 
 		# VAL
+		if old_val_err>val_err:
+			#increment in val performance
+			val_patiance = 0
+			net['best_epoch'] = k
+			best_model = deepcopy(net)
+		else:
+			val_patiance+=1
+			if val_patiance>=patiance:
+				print('val patiance reached')
+				break
+
+		old_val_err = val_err
+
 
 		if verbose:
 			print('Iteration: ',k,'		Error: ',E,'	scale factor: ',dampfac)
@@ -810,8 +841,13 @@ def train_LM(P,Y,net,k_max=100,E_stop=1e-10,dampfac=3.0,dampconst=10.0,\
 		
 	net['ErrorHistory'] = ErrorHistory[:k]
 	if early_stop:
-		net['ValErrorHistory'] = ValErrorHistory[:k]
-	
+		best_model['ValErrorHistory'] = ValErrorHistory[:k]
+		best_model['ErrorHistory'] = ErrorHistory[:k]
+		if not os.path.isdir('pyrenn_models'):
+			os.mkdir('pyrenn_models')
+			time_ = time.strftime('%Y%m%d_%H%M%S')
+		saveNN(best_model,best_model['name']+'_'+time_)
+		return best_model
 	return net
 	
 	
